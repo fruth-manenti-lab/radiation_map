@@ -6,7 +6,6 @@ from typing import List, Tuple, Optional
 from scipy.stats import norm
 import math
 
-
 def parse_identified(text: str) -> List[Tuple[float, str, float, float]]:
     """
     Parse the 'Identified Nuclides' table from a Genie‑2000 RPT file.
@@ -21,7 +20,6 @@ def parse_identified(text: str) -> List[Tuple[float, str, float, float]]:
     current_nuc: Optional[str] = None
     sci_num = re.compile(r"^[+-]?\d+\.\d+E[+-]\d+$")
     num_re = re.compile(r"^[+-]?\d+\.\d+(?:[Ee][+-]?\d+)?\*?$")
-
     for line in text.splitlines():
         cols = line.strip().split()
         if not cols:
@@ -32,10 +30,11 @@ def parse_identified(text: str) -> List[Tuple[float, str, float, float]]:
             for token in cols[1:]:
                 if num_re.match(token):
                     try:
-                        energy = float(token.rstrip('*'))
-                        break
+                        val = float(token.rstrip('*'))
                     except ValueError:
                         continue
+                    energy = val
+                    break
             if energy is not None and len(cols) >= 3 and sci_num.match(cols[-2]):
                 records.append((energy, current_nuc, float(cols[-2]), float(cols[-1])))
         else:
@@ -50,17 +49,7 @@ def parse_identified(text: str) -> List[Tuple[float, str, float, float]]:
                     records.append((energy, current_nuc, float(cols[-2]), float(cols[-1])))
     return records
 
-
 def classify_chain(nuclide: str) -> Optional[str]:
-    """
-    Map a daughter nuclide to its parent decay series.
-
-    Args:
-        nuclide: Daughter nuclide code.
-
-    Returns:
-        'U-238', 'Th-232', 'K-40', or None.
-    """
     if nuclide in {"RA-226", "PB-214", "BI-214"}:
         return "U-238"
     if nuclide in {"AC-228", "PB-212", "TL-208", "BI-212"}:
@@ -69,25 +58,18 @@ def classify_chain(nuclide: str) -> Optional[str]:
         return "K-40"
     return None
 
-
 def select_one_line(
     records: List[Tuple[float, str, float, float]],
     parent: str
 ) -> Tuple[Optional[float], Optional[str], float, float]:
-    """
-    Choose a single gamma line per series.
-
-    Args:
-        records: Parsed records for a single chain.
-        parent: Chain identifier.
-
-    Returns:
-        (energy_keV, nuclide, activity_Bq, uncertainty_Bq).
-    """
     targets = {"U-238": (186.2, "RA-226"), "Th-232": (911.2, "AC-228")}  
     if parent == "K-40":
+        # Override energy to the documented 1460.8 keV
+        # pick record with highest activity but set energy_keV to 1460.8
+        if not records:
+            return None, None, float('nan'), float('nan')
         best = max(records, key=lambda x: x[2])
-        return best[0], best[1], best[2], best[3]
+        return 1460.8, best[1], best[2], best[3]
     targ_e, targ_nuc = targets[parent]
     for e, nuc, act, unc in records:
         if nuc == targ_nuc and abs(e - targ_e) <= 2:
@@ -98,17 +80,7 @@ def select_one_line(
         return best[0], best[1], best[2], best[3]
     return None, None, float('nan'), float('nan')
 
-
 def process_samples(zip_path: str) -> pd.DataFrame:
-    """
-    Extract one-line activities from all RPTs in a ZIP.
-
-    Args:
-        zip_path: Path to the ZIP containing .RPT files.
-
-    Returns:
-        DataFrame with columns [sample, chain, energy_keV, nuclide, activity_Bq, uncertainty_Bq].
-    """
     rows = []
     with zipfile.ZipFile(zip_path) as zf:
         for fname in sorted(zf.namelist()):
@@ -134,17 +106,7 @@ def process_samples(zip_path: str) -> pd.DataFrame:
                 })
     return pd.DataFrame(rows)
 
-
 def compute_significance(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Generate z-test results for a-vs-b sample pairs.
-
-    Args:
-        df: DataFrame from process_samples.
-
-    Returns:
-        DataFrame with [sample_pair, chain, activity_a, uncertainty_a, activity_b, uncertainty_b, z_stat, p_value].
-    """
     import re
     pairs = {}
     for _, row in df.iterrows():
@@ -178,13 +140,11 @@ def compute_significance(df: pd.DataFrame) -> pd.DataFrame:
                     })
     return pd.DataFrame(records)
 
-
 def main():
     df = process_samples('nids.zip')
     df.to_csv('sample_activities_one_line_updated.csv', index=False)
     sig = compute_significance(df)
     sig.to_csv('sample_ab_significance_one_line.csv', index=False)
-
 
 if __name__ == '__main__':
     main()
